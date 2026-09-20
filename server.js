@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
+const crypto = require('crypto');
 const { GoogleGenerativeAI, SchemaType } = require('@google/generative-ai');
 const db = require('./db');
 require('dotenv').config();
@@ -199,21 +200,121 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-app.post('/api/auth/reset-password', async (req, res) => {
-    const { email, username, new_password } = req.body;
+// --- Password reset (secure, token-based, single-use, time-limited) ---
+const RESET_TOKEN_TTL_MINUTES = Number(process.env.RESET_TOKEN_TTL_MINUTES) || 30;
+const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || null;
+const isEmailConfigured = () => Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+
+function hashResetToken(rawToken) {
+    return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function getBaseUrl(req) {
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    return `${proto}://${host}`;
+}
+
+async function sendResetEmail(toEmail, resetUrl) {
+    const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            from: RESEND_FROM_EMAIL,
+            to: [toEmail],
+            subject: 'Đặt lại mật khẩu MySchool',
+            html: `<p>Bạn đã yêu cầu đặt lại mật khẩu MySchool.</p>
+                   <p>Nhấn vào liên kết dưới đây để đặt lại mật khẩu (hết hạn sau ${RESET_TOKEN_TTL_MINUTES} phút):</p>
+                   <p><a href="${resetUrl}">${resetUrl}</a></p>
+                   <p>Nếu bạn không yêu cầu, hãy bỏ qua email này.</p>`
+        })
+    });
+    if (!resp.ok) {
+        const detail = await resp.text().catch(() => '');
+        throw new Error(`Resend API error ${resp.status}: ${detail}`);
+    }
+}
+
+// Step 1: request a reset link by email. Always returns a neutral response to prevent
+// user enumeration. If email delivery is not configured, the feature is reported as unavailable.
+app.post('/api/auth/request-reset', async (req, res) => {
+    const { email } = req.body;
+    const neutralMsg = 'Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.';
     try {
-        const user = await db.query('SELECT * FROM users WHERE email = $1 AND username = $2', [email, username]);
-        if (user.rows.length === 0) {
-            return res.status(400).json({ msg: 'Email hoặc tên đăng nhập không chính xác.' });
+        if (!isEmailConfigured()) {
+            return res.status(501).json({ msg: 'Tính năng đặt lại mật khẩu chưa được cấu hình.' });
+        }
+        if (!email || typeof email !== 'string') {
+            // Neutral response even on malformed input to avoid leaking behavior.
+            return res.json({ msg: neutralMsg });
         }
 
+        const normalizedEmail = email.trim().toLowerCase();
+        const userRes = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
+
+        if (userRes.rows.length > 0) {
+            const userId = userRes.rows[0].id;
+            const rawToken = crypto.randomBytes(32).toString('hex');
+            const tokenHash = hashResetToken(rawToken);
+            const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
+
+            // Invalidate any previous unused tokens for this user, then store the new one.
+            await db.query('UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL', [userId]);
+            await db.query(
+                'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+                [userId, tokenHash, expiresAt]
+            );
+
+            const resetUrl = `${getBaseUrl(req)}/reset-password.html?token=${rawToken}`;
+            try {
+                await sendResetEmail(normalizedEmail, resetUrl);
+            } catch (mailErr) {
+                console.error('Reset email send failed:', mailErr.message);
+                // Still return neutral message; do not reveal delivery status.
+            }
+        }
+
+        return res.json({ msg: neutralMsg });
+    } catch (err) {
+        console.error('Request Reset Error:', err.message);
+        return res.status(500).json({ msg: 'Lỗi máy chủ.' });
+    }
+});
+
+// Step 2: reset the password using a valid, unused, non-expired token.
+app.post('/api/auth/reset-password', async (req, res) => {
+    const { token, new_password } = req.body;
+    try {
+        if (!token || typeof token !== 'string' || !new_password || typeof new_password !== 'string') {
+            return res.status(400).json({ msg: 'Yêu cầu không hợp lệ.' });
+        }
+        if (new_password.length < 8 || !/[A-Za-z]/.test(new_password) || !/[0-9]/.test(new_password)) {
+            return res.status(400).json({ msg: 'Mật khẩu phải có ít nhất 8 ký tự, gồm chữ và số.' });
+        }
+
+        const tokenHash = hashResetToken(token);
+        const tokenRes = await db.query(
+            'SELECT id, user_id FROM password_resets WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()',
+            [tokenHash]
+        );
+        if (tokenRes.rows.length === 0) {
+            return res.status(400).json({ msg: 'Liên kết đặt lại không hợp lệ hoặc đã hết hạn.' });
+        }
+
+        const { id: resetId, user_id: userId } = tokenRes.rows[0];
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(new_password, salt);
 
-        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.rows[0].id]);
+        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, userId]);
+        await db.query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [resetId]);
+
         res.json({ msg: 'Đặt lại mật khẩu thành công.' });
     } catch (err) {
-        console.error("Reset Password Error:", err.message);
+        console.error('Reset Password Error:', err.message);
         res.status(500).json({ msg: 'Lỗi máy chủ khi đặt lại mật khẩu.' });
     }
 });
@@ -254,6 +355,11 @@ app.post('/api/auth/google', async (req, res) => {
         let email, name, avatar_url, googleId;
 
         if (isMock) {
+            // Mock Google login is a DEVELOPMENT-ONLY helper. It must never run in production
+            // because it would allow logging in as any email without verifying a Google token.
+            if (process.env.NODE_ENV === 'production') {
+                return res.status(403).json({ msg: 'Chức năng đăng nhập giả lập không khả dụng.' });
+            }
             email = mockData.email || 'student@gmail.com';
             name = mockData.name || 'Học viên Demo';
             avatar_url = mockData.picture || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=120';

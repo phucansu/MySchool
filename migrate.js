@@ -35,6 +35,20 @@ async function migrate() {
         await db.query("UPDATE questions SET question_type = 'multiple_choice' WHERE question_type IS NULL;");
         console.log("✔ Questions updated with fill-in-the-blank support.");
 
+        // 3c. Password reset tokens (secure, single-use, time-limited)
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                used_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        await db.query("CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash);");
+        console.log("✔ password_resets table ready.");
+
         // 4. Seed subjects if not already seeded
         const subjectsResult = await db.query("SELECT * FROM subjects;");
         if (subjectsResult.rows.length === 0) {

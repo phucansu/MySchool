@@ -337,26 +337,14 @@
         <!-- Forgot Password Form -->
         <form id="forgot-form" class="auth-form" style="display: none;">
             <p class="step-title" style="font-size: 1.25rem; font-weight: 700; margin-bottom: 5px; color: var(--secondary);">Đặt lại mật khẩu</p>
-            <p class="step-desc" style="font-size: 0.9rem; color: var(--text-gray); margin-bottom: 25px;">Nhập thông tin xác thực để thiết lập mật khẩu mới.</p>
-            
+            <p class="step-desc" style="font-size: 0.9rem; color: var(--text-gray); margin-bottom: 25px;">Nhập email đăng ký. Chúng tôi sẽ gửi liên kết đặt lại mật khẩu tới email của bạn.</p>
+
             <div class="form-group">
                 <label>Email đăng ký</label>
                 <input type="email" id="forgot-email" placeholder="email@example.com" required>
             </div>
-            <div class="form-group">
-                <label>Tên đăng nhập</label>
-                <input type="text" id="forgot-username" placeholder="nguyenvana" required>
-            </div>
-            <div class="form-group">
-                <label>Mật khẩu mới</label>
-                <input type="password" id="forgot-password" placeholder="••••••••" required>
-            </div>
-            <div class="form-group">
-                <label>Xác nhận mật khẩu mới</label>
-                <input type="password" id="forgot-confirm-password" placeholder="••••••••" required>
-            </div>
-            
-            <button type="submit" class="btn btn-primary auth-btn">Xác nhận đặt lại mật khẩu</button>
+
+            <button type="submit" class="btn btn-primary auth-btn">Gửi liên kết đặt lại</button>
             <div style="text-align: center; margin-top: 20px;">
                 <a href="#" id="back-to-login" style="color: var(--text-gray); font-size: 0.9rem; text-decoration: none; font-weight: 500;">← Quay lại đăng nhập</a>
             </div>
@@ -914,24 +902,16 @@
         forgotForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('forgot-email').value;
-            const username = document.getElementById('forgot-username').value;
-            const new_password = document.getElementById('forgot-password').value;
-            const confirm_password = document.getElementById('forgot-confirm-password').value;
-
-            if (new_password !== confirm_password) {
-                showError('Mật khẩu mới không trùng khớp.');
-                return;
-            }
 
             try {
-                const res = await fetch(`${API_URL}/auth/reset-password`, {
+                const res = await fetch(`${API_URL}/auth/request-reset`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, username, new_password })
+                    body: JSON.stringify({ email })
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    alert('Đặt lại mật khẩu thành công! Hãy đăng nhập bằng mật khẩu mới.');
+                    alert(data.msg || 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.');
                     authTabs.style.display = 'flex';
                     loginForm.style.display = 'block';
                     forgotForm.style.display = 'none';
@@ -939,7 +919,7 @@
                     document.getElementById('sso-section').style.display = 'block';
                     forgotForm.reset();
                 } else {
-                    showError(data.msg);
+                    showError(data.msg || 'Không thể gửi yêu cầu đặt lại mật khẩu.');
                 }
             } catch (err) {
                 showError('Lỗi kết nối server');
@@ -1039,8 +1019,15 @@
                     // Show One Tap prompt (optional, seamless returning-user login)
                     google.accounts.id.prompt();
                 } else {
-                    // No real Client ID → keep mock button visible
-                    console.info("Google Client ID not configured — using mock SSO button.");
+                    // No real Client ID configured.
+                    // The mock SSO button is a DEVELOPMENT-ONLY helper (the server rejects
+                    // mock logins in production), so only show it on localhost.
+                    const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.protocol === 'file:';
+                    if (isLocalDev) {
+                        console.info("Google Client ID not configured — using mock SSO button (dev only).");
+                    } else {
+                        document.getElementById('mock-google-btn').style.display = 'none';
+                    }
                 }
             } catch (err) {
                 console.error("Google SSO initialization failed", err);

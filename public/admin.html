@@ -738,36 +738,16 @@
                 <div class="tool-card" style="max-width: 760px;">
                     <h2 style="color: var(--primary);">⚙️ Cấu hình Gemini API</h2>
                     <p style="color: var(--text-gray); margin: 10px 0 25px;">
-                        API key được lưu trên máy chủ và không hiển thị đầy đủ lại trên trình duyệt.
-                        Key mới có hiệu lực ngay cho chatbot, roadmap, phân tích và tạo đề AI.
+                        Gemini API key được cấu hình qua biến môi trường <code>GEMINI_API_KEY</code> trên máy chủ.
+                        Vì lý do bảo mật, key không thể nhập hoặc chỉnh sửa từ giao diện và không bao giờ được hiển thị.
                     </p>
 
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; margin-bottom: 22px;">
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px;">
                         <div style="display: flex; justify-content: space-between; gap: 15px; flex-wrap: wrap;">
                             <span style="font-weight: 700;">Trạng thái</span>
                             <span id="gemini-key-status" style="color: var(--text-gray);">Đang tải...</span>
                         </div>
-                        <div style="display: flex; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-top: 10px;">
-                            <span style="font-weight: 700;">Key hiện tại</span>
-                            <code id="gemini-masked-key">--</code>
-                        </div>
                     </div>
-
-                    <form id="gemini-settings-form">
-                        <div class="form-group">
-                            <label for="gemini-api-key">Gemini API key mới</label>
-                            <div style="display: flex; gap: 10px;">
-                                <input type="password" id="gemini-api-key" autocomplete="new-password"
-                                    placeholder="Nhập API key Gemini"
-                                    style="width:100%; padding:14px; border-radius:12px; border:1px solid #ddd;">
-                                <button type="button" class="btn btn-outline" onclick="toggleGeminiKeyVisibility()">Hiện</button>
-                            </div>
-                        </div>
-                        <button type="submit" id="save-gemini-key-btn" class="btn btn-primary" style="margin-top: 20px;">
-                            Lưu API key
-                        </button>
-                        <p id="gemini-settings-message" style="display: none; margin-top: 15px;"></p>
-                    </form>
                 </div>
             </section>
         </main>
@@ -1206,8 +1186,7 @@
         async function loadGeminiSettings() {
             const token = localStorage.getItem('token');
             const statusEl = document.getElementById('gemini-key-status');
-            const maskedKeyEl = document.getElementById('gemini-masked-key');
-            if (!statusEl || !maskedKeyEl) return;
+            if (!statusEl) return;
 
             try {
                 const res = await fetch(`${API_URL}/admin/settings/gemini`, {
@@ -1218,63 +1197,14 @@
                 if (!res.ok) throw new Error(data.msg || 'Không thể tải cấu hình.');
 
                 statusEl.textContent = data.configured
-                    ? `Đã cấu hình (${data.source === 'database' ? 'Admin' : 'Biến môi trường'})`
+                    ? 'Đã cấu hình (Biến môi trường)'
                     : 'Chưa cấu hình';
                 statusEl.style.color = data.configured ? '#10B981' : '#EF4444';
-                maskedKeyEl.textContent = data.masked_key || '--';
             } catch (err) {
                 statusEl.textContent = err.message;
                 statusEl.style.color = '#EF4444';
             }
         }
-
-        function toggleGeminiKeyVisibility() {
-            const input = document.getElementById('gemini-api-key');
-            input.type = input.type === 'password' ? 'text' : 'password';
-        }
-
-        document.getElementById('gemini-settings-form').addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const input = document.getElementById('gemini-api-key');
-            const button = document.getElementById('save-gemini-key-btn');
-            const message = document.getElementById('gemini-settings-message');
-            const apiKey = input.value.trim();
-
-            if (!apiKey) {
-                message.textContent = 'Vui lòng nhập API key mới.';
-                message.style.color = '#EF4444';
-                message.style.display = 'block';
-                return;
-            }
-
-            button.disabled = true;
-            message.style.display = 'none';
-            try {
-                const res = await fetch(`${API_URL}/admin/settings/gemini`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-auth-token': localStorage.getItem('token')
-                    },
-                    body: JSON.stringify({ api_key: apiKey })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.msg || 'Không thể lưu API key.');
-
-                input.value = '';
-                input.type = 'password';
-                message.textContent = data.msg;
-                message.style.color = '#10B981';
-                message.style.display = 'block';
-                await loadGeminiSettings();
-            } catch (err) {
-                message.textContent = err.message;
-                message.style.color = '#EF4444';
-                message.style.display = 'block';
-            } finally {
-                button.disabled = false;
-            }
-        });
 
         function toggleAdminAuth(type) {
             const loginForm = document.getElementById('admin-login-form');

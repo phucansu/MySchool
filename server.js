@@ -1,6 +1,8 @@
 // v2 - fix: duration_minutes uses 0 for practice quizzes
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -20,15 +22,113 @@ if (!JWT_SECRET) {
 }
 // ADMIN_SECRET is optional: when unset, admin self-registration is disabled entirely.
 const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
-let geminiApiKey = process.env.GEMINI_API_KEY || '';
-let geminiApiKeySource = geminiApiKey ? 'environment' : 'none';
-let geminiSettingsLoaded = false;
+// Gemini API key comes ONLY from the environment. There is no admin UI or DB storage.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-app.use(cors());
-app.use(express.json());
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// Behind Vercel/other proxies so req.ip and x-forwarded-* are trustworthy.
+app.set('trust proxy', 1);
+
+// --- Security headers (Helmet) ---
+// CSP is delivered separately in Report-Only mode (see below) so we can observe
+// violations without breaking existing inline scripts/handlers, KaTeX, Chart.js, etc.
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    // HSTS only makes sense over HTTPS in production.
+    hsts: IS_PRODUCTION ? undefined : false
+}));
+
+// --- Content-Security-Policy in Report-Only mode ---
+// Whitelists every source the app currently needs. Enforcing mode + inline refactor
+// is a planned follow-up; for now this reports violations without blocking.
+const CSP_REPORT_ONLY = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://accounts.google.com https://apis.google.com",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
+    "img-src 'self' data: https://images.unsplash.com https://ui-avatars.com https://lh3.googleusercontent.com",
+    "connect-src 'self' https://oauth2.googleapis.com https://accounts.google.com",
+    "frame-src https://accounts.google.com",
+    "object-src 'none'",
+    "base-uri 'self'"
+].join('; ');
+app.use((req, res, next) => {
+    res.setHeader('Content-Security-Policy-Report-Only', CSP_REPORT_ONLY);
+    next();
+});
+
+// --- CORS ---
+// When ALLOWED_ORIGINS is set (comma-separated), production restricts cross-origin
+// requests to that list. Same-origin requests (the app's own frontend) are unaffected.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+    origin(origin, cb) {
+        // No Origin header: same-origin or server-to-server → allow.
+        if (!origin) return cb(null, true);
+        // Dev: allow everything for local convenience.
+        if (!IS_PRODUCTION) return cb(null, true);
+        // Prod: if not configured, stay permissive (backward compatible); otherwise enforce list.
+        if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
+        // Disallow CORS headers without throwing (avoids 500s; browser blocks cross-origin).
+        return cb(null, false);
+    }
+}));
+
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
 
-const upload = multer({ storage: multer.memoryStorage() });
+// --- Rate limiting ---
+// Configurable via env; disabled outside production so localhost dev is unaffected.
+const rlSkip = () => !IS_PRODUCTION;
+const rlNum = (name, def) => Number(process.env[name]) || def;
+const makeLimiter = (windowMinutes, max) => rateLimit({
+    windowMs: windowMinutes * 60 * 1000,
+    limit: max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: rlSkip,
+    message: { msg: 'Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.' }
+});
+const loginLimiter = makeLimiter(15, rlNum('RATE_LIMIT_LOGIN', 10));
+const registerLimiter = makeLimiter(15, rlNum('RATE_LIMIT_REGISTER', 5));
+const resetLimiter = makeLimiter(15, rlNum('RATE_LIMIT_RESET', 5));
+// AI endpoints: per authenticated user (fallback to IP when unauthenticated).
+const aiLimiter = rateLimit({
+    windowMs: rlNum('RATE_LIMIT_AI_WINDOW_MIN', 10) * 60 * 1000,
+    limit: rlNum('RATE_LIMIT_AI', 20),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: rlSkip,
+    keyGenerator: (req, res) => (req.user && req.user.id) ? `user:${req.user.id}` : rateLimit.ipKeyGenerator(req, res),
+    message: { msg: 'Bạn đã dùng tính năng AI quá nhiều lần. Vui lòng thử lại sau.' }
+});
+
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES) || 10 * 1024 * 1024; // 10MB
+const ALLOWED_UPLOAD_MIME = new Set([
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+]);
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    fileFilter: (req, file, cb) => {
+        if (ALLOWED_UPLOAD_MIME.has(file.mimetype)) return cb(null, true);
+        cb(new Error('INVALID_FILE_TYPE'));
+    }
+});
+
+// Verify the actual file content (magic bytes), not just the client-declared MIME type.
+function detectUploadType(buffer) {
+    if (!buffer || buffer.length < 4) return null;
+    // PDF: "%PDF"
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'pdf';
+    // DOCX (OOXML) is a ZIP archive: "PK\x03\x04"
+    if (buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04) return 'docx';
+    return null;
+}
 let pdfParser;
 let mammothParser;
 
@@ -87,44 +187,11 @@ const adminAuth = async (req, res, next) => {
     }
 };
 
-async function ensureSystemSettingsTable() {
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS system_settings (
-            setting_key VARCHAR(100) PRIMARY KEY,
-            setting_value TEXT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-}
-
-async function loadGeminiApiKey() {
-    if (geminiSettingsLoaded) return geminiApiKey;
-
-    await ensureSystemSettingsTable();
-    const result = await db.query(
-        'SELECT setting_value FROM system_settings WHERE setting_key = $1',
-        ['gemini_api_key']
-    );
-    if (result.rows[0]?.setting_value) {
-        geminiApiKey = result.rows[0].setting_value;
-        geminiApiKeySource = 'database';
+function getGeminiClient() {
+    if (!GEMINI_API_KEY) {
+        throw new Error('GEMINI_API_KEY chưa được cấu hình.');
     }
-    geminiSettingsLoaded = true;
-    return geminiApiKey;
-}
-
-async function getGeminiClient() {
-    const apiKey = await loadGeminiApiKey();
-    if (!apiKey) {
-        throw new Error('Gemini API key chưa được cấu hình.');
-    }
-    return new GoogleGenerativeAI(apiKey);
-}
-
-function maskApiKey(apiKey) {
-    if (!apiKey) return '';
-    if (apiKey.length <= 8) return '********';
-    return `${apiKey.slice(0, 4)}${'*'.repeat(Math.min(20, apiKey.length - 8))}${apiKey.slice(-4)}`;
+    return new GoogleGenerativeAI(GEMINI_API_KEY);
 }
 
 function repairUtf8Mojibake(value) {
@@ -136,11 +203,27 @@ function repairUtf8Mojibake(value) {
     return repaired.includes('\uFFFD') ? value : repaired.normalize('NFC');
 }
 
+// --- Input validation helpers (server-side; frontend validation is UX only) ---
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_.]{3,30}$/;
+const isValidEmail = (v) => typeof v === 'string' && v.length <= 254 && EMAIL_RE.test(v);
+const isValidUsername = (v) => typeof v === 'string' && USERNAME_RE.test(v);
+const isStrongPassword = (v) => typeof v === 'string' && v.length >= 8 && /[A-Za-z]/.test(v) && /[0-9]/.test(v);
+const isValidLen = (v, max) => v === undefined || v === null || (typeof v === 'string' && v.length <= max);
+
 // 0. Auth Endpoints
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', registerLimiter, async (req, res) => {
     const { username, email, password, full_name, admin_code, isGoogleRegister, avatar_url } = req.body;
     try {
-        const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
+        // --- Server-side validation ---
+        if (!isValidEmail(email)) return res.status(400).json({ msg: 'Email không hợp lệ.' });
+        if (!isValidUsername(username)) return res.status(400).json({ msg: 'Tên đăng nhập cần 3-30 ký tự, chỉ gồm chữ, số, dấu chấm hoặc gạch dưới.' });
+        if (!isGoogleRegister && !isStrongPassword(password)) return res.status(400).json({ msg: 'Mật khẩu phải có ít nhất 8 ký tự, gồm cả chữ và số.' });
+        if (!isValidLen(full_name, 100)) return res.status(400).json({ msg: 'Họ tên tối đa 100 ký tự.' });
+        if (!isValidLen(avatar_url, 500)) return res.status(400).json({ msg: 'Avatar URL không hợp lệ.' });
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const userExists = await db.query('SELECT * FROM users WHERE LOWER(email) = $1 OR username = $2', [normalizedEmail, username]);
         if (userExists.rows.length > 0) return res.status(400).json({ msg: 'Email hoặc tên đăng nhập đã được sử dụng.' });
 
         let hashedPassword;
@@ -158,7 +241,7 @@ app.post('/api/register', async (req, res) => {
 
         const newUser = await db.query(
             'INSERT INTO users (username, email, password_hash, full_name, avatar_url, is_admin, survey_data) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username, email, is_admin',
-            [username, email, hashedPassword, full_name, avatar_url || null, isAdmin, JSON.stringify(req.body.survey)]
+            [username, normalizedEmail, hashedPassword, full_name, avatar_url || null, isAdmin, JSON.stringify(req.body.survey)]
         );
 
         const payload = { user: { id: newUser.rows[0].id } };
@@ -172,10 +255,13 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     try {
-        const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (typeof email !== 'string' || typeof password !== 'string') {
+            return res.status(400).json({ msg: 'Invalid Credentials' });
+        }
+        const user = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [email.trim().toLowerCase()]);
         if (user.rows.length === 0) return res.status(400).json({ msg: 'Invalid Credentials' });
 
         const isMatch = await bcrypt.compare(password, user.rows[0].password_hash);
@@ -241,7 +327,7 @@ async function sendResetEmail(toEmail, resetUrl) {
 
 // Step 1: request a reset link by email. Always returns a neutral response to prevent
 // user enumeration. If email delivery is not configured, the feature is reported as unavailable.
-app.post('/api/auth/request-reset', async (req, res) => {
+app.post('/api/auth/request-reset', resetLimiter, async (req, res) => {
     const { email } = req.body;
     const neutralMsg = 'Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.';
     try {
@@ -885,9 +971,19 @@ app.get('/api/results/user', auth, async (req, res) => {
 app.put('/api/users/profile', auth, async (req, res) => {
     const { email, avatar_url, full_name, survey_data } = req.body;
     try {
+        // --- Server-side validation ---
+        if (!isValidEmail(email)) return res.status(400).json({ msg: 'Email không hợp lệ.' });
+        if (!isValidLen(full_name, 100)) return res.status(400).json({ msg: 'Họ tên tối đa 100 ký tự.' });
+        if (!isValidLen(avatar_url, 500)) return res.status(400).json({ msg: 'Avatar URL không hợp lệ.' });
+        const normalizedEmail = email.trim().toLowerCase();
+
+        // Prevent taking another user's email.
+        const emailOwner = await db.query('SELECT id FROM users WHERE LOWER(email) = $1 AND id <> $2', [normalizedEmail, req.user.id]);
+        if (emailOwner.rows.length > 0) return res.status(400).json({ msg: 'Email đã được sử dụng.' });
+
         const updatedUser = await db.query(
             'UPDATE users SET email = $1, avatar_url = $2, full_name = $3, survey_data = $4 WHERE id = $5 RETURNING id, username, email, full_name, avatar_url, survey_data',
-            [email, avatar_url, full_name, JSON.stringify(survey_data), req.user.id]
+            [normalizedEmail, avatar_url || null, full_name || null, JSON.stringify(survey_data), req.user.id]
         );
         res.json(updatedUser.rows[0]);
     } catch (err) {
@@ -1043,52 +1139,14 @@ app.get('/api/admin/dashboard-stats', [auth, adminAuth], async (req, res) => {
     }
 });
 
-app.get('/api/admin/settings/gemini', [auth, adminAuth], async (req, res) => {
-    try {
-        const apiKey = await loadGeminiApiKey();
-        res.json({
-            configured: Boolean(apiKey),
-            masked_key: maskApiKey(apiKey),
-            source: geminiApiKeySource
-        });
-    } catch (err) {
-        console.error('Load Gemini Settings Error:', err);
-        res.status(500).json({ msg: 'Không thể tải cấu hình Gemini.' });
-    }
-});
-
-app.put('/api/admin/settings/gemini', [auth, adminAuth], async (req, res) => {
-    const apiKey = typeof req.body.api_key === 'string' ? req.body.api_key.trim() : '';
-    if (!apiKey) {
-        return res.status(400).json({ msg: 'API key Gemini không được để trống.' });
-    }
-    if (apiKey.length < 20 || /\s/.test(apiKey)) {
-        return res.status(400).json({ msg: 'API key Gemini không hợp lệ.' });
-    }
-
-    try {
-        await ensureSystemSettingsTable();
-        await db.query(
-            `INSERT INTO system_settings (setting_key, setting_value, updated_at)
-             VALUES ($1, $2, CURRENT_TIMESTAMP)
-             ON CONFLICT (setting_key)
-             DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP`,
-            ['gemini_api_key', apiKey]
-        );
-        geminiApiKey = apiKey;
-        geminiApiKeySource = 'database';
-        geminiSettingsLoaded = true;
-
-        res.json({
-            msg: 'Đã cập nhật Gemini API key.',
-            configured: true,
-            masked_key: maskApiKey(apiKey),
-            source: 'database'
-        });
-    } catch (err) {
-        console.error('Update Gemini Settings Error:', err);
-        res.status(500).json({ msg: 'Không thể lưu Gemini API key.' });
-    }
+// Read-only status of the Gemini configuration. The key is provided ONLY via the
+// GEMINI_API_KEY environment variable; it is never returned, stored in the DB, or editable via API.
+app.get('/api/admin/settings/gemini', [auth, adminAuth], (req, res) => {
+    res.json({
+        configured: Boolean(GEMINI_API_KEY),
+        source: GEMINI_API_KEY ? 'environment' : 'none',
+        editable: false
+    });
 });
 
 // Admin: Get Quiz Questions
@@ -1119,13 +1177,33 @@ function normalizeQuestionInput(question = {}) {
 
 function isValidQuestionInput(question) {
     if (!question.content) return false;
+    // Length bounds
+    if (question.content.length > 10000) return false;
+    if (question.explanation && question.explanation.length > 10000) return false;
     if (question.question_type === 'fill_blank') {
         return question.correct_answer.length > 0 && Number.isFinite(Number(question.correct_answer.replace(',', '.')));
+    }
+    for (const opt of [question.option_a, question.option_b, question.option_c, question.option_d]) {
+        if (opt && opt.length > 2000) return false;
     }
     return Boolean(
         question.option_a && question.option_b && question.option_c && question.option_d &&
         ['A', 'B', 'C', 'D'].includes(question.correct_option)
     );
+}
+
+// Shared quiz-metadata validation.
+function validateQuizMeta({ title, description, grade }) {
+    if (typeof title !== 'string' || title.trim().length === 0 || title.length > 255) {
+        return 'Tiêu đề đề thi bắt buộc và tối đa 255 ký tự.';
+    }
+    if (description !== undefined && description !== null && String(description).length > 1000) {
+        return 'Mô tả tối đa 1000 ký tự.';
+    }
+    if (grade !== undefined && grade !== null && ![10, 11, 12].includes(Number(grade))) {
+        return 'Khối lớp chỉ nhận giá trị 10, 11 hoặc 12.';
+    }
+    return null;
 }
 
 async function insertQuestionRecord(client, quizId, rawQuestion) {
@@ -1147,7 +1225,9 @@ app.put('/api/admin/quiz/:id', [auth, adminAuth], async (req, res) => {
     const normalizedTitle = typeof title === 'string' ? title.trim() : '';
     const normalizedQuestions = Array.isArray(questions) ? questions.map(normalizeQuestionInput) : [];
 
-    if (!normalizedTitle || !subject_id || !grade) {
+    const metaError = validateQuizMeta({ title: normalizedTitle, grade });
+    if (metaError) return res.status(400).json({ msg: metaError });
+    if (!subject_id || !grade) {
         return res.status(400).json({ msg: 'Vui lòng nhập đầy đủ tiêu đề, môn học và lớp.' });
     }
     if (!duration_minutes) {
@@ -1333,20 +1413,26 @@ function parseAiQuizQuestions(aiText) {
 
 // 9. Admin: Scan PDF/Word
 app.post('/api/admin/scan-quiz', [auth, adminAuth, upload.single('file')], async (req, res) => {
-    if (!req.file) return res.status(400).send('No file uploaded.');
+    if (!req.file) return res.status(400).json({ msg: 'Chưa có tệp nào được tải lên.' });
     const { subject_id, grade, duration } = req.body;
     const originalFilename = repairUtf8Mojibake(req.file.originalname);
     let text = '';
-    
+
+    // Validate real file content (magic bytes), not just the client-declared MIME type.
+    const detectedType = detectUploadType(req.file.buffer);
+    if (!detectedType) {
+        return res.status(400).json({ msg: 'Tệp không hợp lệ. Chỉ chấp nhận PDF hoặc DOCX.' });
+    }
+
     try {
-        if (req.file.mimetype === 'application/pdf') {
+        if (detectedType === 'pdf') {
             const data = await parsePdfBuffer(req.file.buffer);
             text = data.text;
-        } else if (req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        } else if (detectedType === 'docx') {
             const result = await getMammothParser().extractRawText({ buffer: req.file.buffer });
             text = result.value;
         } else {
-            return res.status(400).send('Only PDF and DOCX are supported.');
+            return res.status(400).json({ msg: 'Chỉ hỗ trợ PDF và DOCX.' });
         }
 
         if (!text || text.trim().length < 10) {
@@ -1497,7 +1583,7 @@ app.post('/api/admin/scan-quiz', [auth, adminAuth, upload.single('file')], async
             }
         }
         console.error("Scanning Error:", err);
-        res.status(500).json({ msg: 'Scanning Failed: ' + err.message });
+        res.status(500).json({ msg: 'Quét tài liệu thất bại.' });
     }
 });
 
@@ -1538,7 +1624,7 @@ app.get('/api/leaderboard', async (req, res) => {
 });
 
 // Admin: AI Generate Quiz
-app.post('/api/admin/ai-generate-quiz', auth, adminAuth, async (req, res) => {
+app.post('/api/admin/ai-generate-quiz', auth, adminAuth, aiLimiter, async (req, res) => {
     const { subject_id, grade, count, subject_name } = req.body;
     const supportsFillBlank = [1, 2, 3].includes(Number(subject_id)) || /toán|vật lý|hóa/i.test(String(subject_name || ''));
     
@@ -1693,8 +1779,10 @@ app.post('/api/admin/ai-generate-quiz', auth, adminAuth, async (req, res) => {
 // Admin: Manual Quiz Creation
 app.post('/api/admin/quiz-manual', [auth, adminAuth], async (req, res) => {
     const { title, subject_id, grade, duration, questions, topic_id } = req.body;
+    const metaError = validateQuizMeta({ title, grade });
+    if (metaError) return res.status(400).json({ msg: metaError });
     const normalizedQuestions = Array.isArray(questions) ? questions.map(normalizeQuestionInput) : [];
-    if (!title || !subject_id || !grade || normalizedQuestions.length === 0) {
+    if (!subject_id || normalizedQuestions.length === 0) {
         return res.status(400).json({ msg: 'Vui lòng nhập đầy đủ thông tin đề và ít nhất một câu hỏi.' });
     }
     if (normalizedQuestions.some(question => !isValidQuestionInput(question))) {
@@ -1750,7 +1838,7 @@ function hintRevealsFinalAnswer(hint, question) {
     return false;
 }
 
-app.post('/api/ai/hint', auth, async (req, res) => {
+app.post('/api/ai/hint', auth, aiLimiter, async (req, res) => {
     const questionId = Number(req.body.question_id);
     if (!Number.isInteger(questionId) || questionId <= 0) {
         return res.status(400).json({ msg: 'Câu hỏi không hợp lệ.' });
@@ -1816,7 +1904,7 @@ function isStoredQuestionAnswerCorrect(question, answer) {
     return Math.abs(actual - expected) <= tolerance;
 }
 
-app.post('/api/ai/analyze-results', auth, async (req, res) => {
+app.post('/api/ai/analyze-results', auth, aiLimiter, async (req, res) => {
     const { quiz_id, score, correct_count, total_count, userAnswers } = req.body;
     console.log("AI Analysis Request for quiz_id:", quiz_id);
     try {
@@ -1890,16 +1978,12 @@ app.post('/api/ai/analyze-results', auth, async (req, res) => {
             console.log("[DEV MOCK] Quota exceeded. Returning DEV MOCK analysis...");
             return res.json({ analysis: "### [DEV MOCK] Phân tích kết quả (dữ liệu giả lập cho development)\n\n* Đây là nội dung DEV MOCK, chỉ hiển thị ở môi trường development khi AI hết hạn ngạch.\n* Sản xuất sẽ trả về trạng thái 503." });
         }
-        res.status(500).json({
-            msg: 'AI Analysis Failed',
-            error: err.message,
-            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-        });
+        res.status(500).json({ msg: 'Không thể phân tích kết quả bằng AI.' });
     }
 });
 
 // AI Chat Tutor
-app.post('/api/chat', auth, async (req, res) => {
+app.post('/api/chat', auth, aiLimiter, async (req, res) => {
     const { message, history } = req.body;
     if (!message) return res.status(400).json({ msg: 'Tin nhắn không được để trống.' });
 
@@ -1937,7 +2021,7 @@ Hãy tuân thủ các quy tắc sau:
              console.log("Quota exceeded. Falling back to Mock chat reply...");
              return res.json({ reply: "Xin chào! Hiện tại hệ thống AI Gia sư của mình đang tạm thời hết hạn ngạch truy cập (Quota 429). Bạn có thể thử lại sau ít phút hoặc liên hệ với quản trị viên nhé! Rất xin lỗi vì sự bất tiện này." });
         }
-        res.status(500).json({ msg: 'Gặp lỗi khi kết nối với AI Gia sư.', error: err.message });
+        res.status(500).json({ msg: 'Gặp lỗi khi kết nối với AI Gia sư.' });
     }
 });
 
@@ -1984,7 +2068,7 @@ app.get('/api/roadmap/history', auth, async (req, res) => {
 });
 
 // 15. Generate Personalized Study Roadmap
-app.post('/api/roadmap/generate', auth, async (req, res) => {
+app.post('/api/roadmap/generate', auth, aiLimiter, async (req, res) => {
     let currentRoadmapData = null;
 
     try {
@@ -2060,6 +2144,22 @@ app.post('/api/roadmap/generate', auth, async (req, res) => {
         }
         res.status(500).json({ msg: 'Không thể tạo lộ trình.' });
     }
+});
+
+// --- Global error handler (must be last). Never leaks internals to clients. ---
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ msg: `Tệp quá lớn. Kích thước tối đa ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB.` });
+        }
+        return res.status(400).json({ msg: 'Tải tệp thất bại.' });
+    }
+    if (err && err.message === 'INVALID_FILE_TYPE') {
+        return res.status(400).json({ msg: 'Tệp không hợp lệ. Chỉ chấp nhận PDF hoặc DOCX.' });
+    }
+    console.error('Unhandled error:', err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ msg: 'Lỗi máy chủ.' });
 });
 
 module.exports = app;

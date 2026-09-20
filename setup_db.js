@@ -75,14 +75,7 @@ CREATE TABLE IF NOT EXISTS results (
     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 6. System Settings Table
-CREATE TABLE IF NOT EXISTS system_settings (
-    setting_key VARCHAR(100) PRIMARY KEY,
-    setting_value TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 7. Password Reset Tokens Table (secure, single-use, time-limited)
+-- 6. Password Reset Tokens Table (secure, single-use, time-limited)
 CREATE TABLE IF NOT EXISTS password_resets (
     id SERIAL PRIMARY KEY,
     user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

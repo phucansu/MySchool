@@ -10,7 +10,15 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'eduflow_secret';
+
+// --- Required security secrets (no insecure fallbacks) ---
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is required and is not set. Refusing to start.');
+    process.exit(1);
+}
+// ADMIN_SECRET is optional: when unset, admin self-registration is disabled entirely.
+const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
 let geminiApiKey = process.env.GEMINI_API_KEY || '';
 let geminiApiKeySource = geminiApiKey ? 'environment' : 'none';
 let geminiSettingsLoaded = false;
@@ -144,7 +152,8 @@ app.post('/api/register', async (req, res) => {
             hashedPassword = await bcrypt.hash(password, salt);
         }
 
-        const isAdmin = admin_code && admin_code === (process.env.ADMIN_SECRET || 'EDUFLOW_ADMIN_2026');
+        // Admin registration only when ADMIN_SECRET is configured AND matches. No insecure fallback.
+        const isAdmin = Boolean(ADMIN_SECRET) && admin_code === ADMIN_SECRET;
 
         const newUser = await db.query(
             'INSERT INTO users (username, email, password_hash, full_name, avatar_url, is_admin, survey_data) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username, email, is_admin',

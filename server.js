@@ -1417,56 +1417,61 @@ app.post('/api/admin/scan-quiz', [auth, adminAuth, upload.single('file')], async
             const cleanedFilename = originalFilename.replace(/\.[^/.]+$/, "");
             const locallyParsedQuestions = text ? parseQuizLocally(text) : [];
             const usingLocalParse = locallyParsedQuestions.length > 0;
-            const questions = usingLocalParse ? locallyParsedQuestions : [
-                {
-                    content: `Câu hỏi mẫu trích xuất từ tài liệu quét (Dữ liệu Mock do hết hạn ngạch API $y = ax^2 + bx + c$)`,
-                    option_a: "Đáp án A liên quan đến nội dung tài liệu",
-                    option_b: "Đáp án B",
-                    option_c: "Đáp án C",
-                    option_d: "Đáp án D",
-                    correct_option: "A",
-                    explanation: `Giải thích chi tiết cho câu hỏi mẫu trích xuất từ tài liệu quét: ${cleanedFilename}.`
-                },
-                {
-                    content: `Câu hỏi mẫu 2 từ tài liệu quét (Dữ liệu Mock $f'(x) = \\lim_{\\Delta x \\to 0} \\frac{f(x+\\Delta x) - f(x)}{\\Delta x}$)`,
-                    option_a: "Đáp án A",
-                    option_b: "Đáp án B liên quan",
-                    option_c: "Đáp án C",
-                    option_d: "Đáp án D",
-                    correct_option: "B",
-                    explanation: "Giải thích chi tiết cho câu hỏi 2."
-                }
-            ];
 
+            // No real content could be extracted locally. Fabricated placeholder questions are
+            // DEV-ONLY and must never be produced or saved in production.
+            if (!usingLocalParse) {
+                if (process.env.NODE_ENV === 'production') {
+                    return res.status(503).json({ msg: 'Dịch vụ AI tạm thời không khả dụng và không thể trích xuất nội dung từ tài liệu. Vui lòng thử lại sau.' });
+                }
+                // DEV: return a clearly labeled mock preview only (never written to the database).
+                return res.json({
+                    msg: '[DEV MOCK] Không trích xuất được nội dung; trả về câu hỏi mẫu (KHÔNG lưu). Chỉ dùng cho development.',
+                    preview: true,
+                    title: `[DEV MOCK] Đề Scan: ${cleanedFilename}`,
+                    subject_id: parseInt(subject_id),
+                    grade: parseInt(grade),
+                    duration: parseInt(duration || 15),
+                    questions: [
+                        {
+                            content: `[DEV MOCK] Câu hỏi mẫu 1 (${cleanedFilename})`,
+                            option_a: "A", option_b: "B", option_c: "C", option_d: "D",
+                            correct_option: "A",
+                            explanation: "[DEV MOCK]"
+                        }
+                    ],
+                    is_mock: true,
+                    is_local_parse: false
+                });
+            }
+
+            // usingLocalParse === true: these are REAL questions extracted from the uploaded
+            // document, so persisting them is legitimate in any environment.
+            const questions = locallyParsedQuestions;
             const isPreview = (req.body.preview === 'true' || req.query.preview === 'true');
             if (isPreview) {
                 return res.json({
-                    msg: usingLocalParse ? 'Quiz parsed successfully (LOCAL - AI unavailable)' : 'Quiz parsed successfully (MOCK - AI unavailable)',
+                    msg: 'Quiz parsed successfully (LOCAL - AI unavailable)',
                     preview: true,
-                    title: `Đề Scan: ${cleanedFilename} (Dữ liệu thử nghiệm - Quota Exceeded)`,
-                    title: usingLocalParse ? `Đề Scan: ${cleanedFilename}` : `Đề Scan: ${cleanedFilename} (AI unavailable)`,
+                    title: `Đề Scan: ${cleanedFilename}`,
                     subject_id: parseInt(subject_id),
                     grade: parseInt(grade),
                     duration: parseInt(duration || 15),
                     questions: questions,
-                    is_mock: !usingLocalParse,
-                    is_local_parse: usingLocalParse
+                    is_mock: false,
+                    is_local_parse: true
                 });
             }
 
             const client = await db.pool.connect();
             try {
                 await client.query('BEGIN');
+                const localTitle = `Đề Scan: ${originalFilename}`;
                 const newQuiz = await client.query(
                     'INSERT INTO quizzes (title, subject_id, grade, duration_minutes) VALUES ($1, $2, $3, $4) RETURNING *',
-                    [`Đề Scan: ${originalFilename} (Mock)`, subject_id, grade, duration || 15]
+                    [localTitle, subject_id, grade, duration || 15]
                 );
                 const quizId = newQuiz.rows[0].id;
-                if (usingLocalParse) {
-                    const localTitle = `Đề Scan: ${originalFilename}`;
-                    await client.query('UPDATE quizzes SET title = $1 WHERE id = $2', [localTitle, quizId]);
-                    newQuiz.rows[0].title = localTitle;
-                }
                 for (const q of questions) {
                     await client.query(
                         'INSERT INTO questions (quiz_id, content, option_a, option_b, option_c, option_d, correct_option, explanation) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
@@ -1475,15 +1480,15 @@ app.post('/api/admin/scan-quiz', [auth, adminAuth, upload.single('file')], async
                 }
                 await client.query('COMMIT');
                 return res.json({
-                    msg: usingLocalParse ? 'Quiz scanned and created (LOCAL - AI unavailable)' : 'Quiz scanned and created (MOCK - AI unavailable)',
+                    msg: 'Quiz scanned and created (LOCAL - AI unavailable)',
                     quiz: newQuiz.rows[0],
-                    is_mock: !usingLocalParse,
-                    is_local_parse: usingLocalParse
+                    is_mock: false,
+                    is_local_parse: true
                 });
             } catch (dbErr) {
                 await client.query('ROLLBACK');
-                console.error("DB Error in Mock Fallback:", dbErr);
-                return res.status(500).json({ msg: 'Scanning Failed: ' + err.message });
+                console.error("DB Error in local-parse fallback:", dbErr);
+                return res.status(500).json({ msg: 'Không thể lưu đề đã quét.' });
             } finally {
                 client.release();
             }
@@ -1637,67 +1642,48 @@ app.post('/api/admin/ai-generate-quiz', auth, adminAuth, async (req, res) => {
     } catch (err) {
         console.error("AI Gen Error:", err);
         const isQuotaError = err.message && (err.message.includes("429") || err.message.includes("quota") || err.message.includes("Quota"));
+        // PRODUCTION: never generate or insert placeholder quiz data when the AI is unavailable.
+        // Return a clear temporary-failure status so the frontend knows the operation failed.
+        if (process.env.NODE_ENV === 'production') {
+            return res.status(503).json({ msg: 'Dịch vụ AI tạm thời không khả dụng. Vui lòng thử lại sau.' });
+        }
+
+        // DEV ONLY: allow a labeled mock quiz (preview-only, never written to the database)
+        // so the admin UI can be exercised without a live AI key.
         if (isQuotaError) {
-            console.log("Quota exceeded. Falling back to Mock quiz generation...");
+            console.log("[DEV MOCK] Quota exceeded. Returning DEV MOCK preview (not saved to DB)...");
             const questions = [];
             const num = parseInt(count) || 10;
             for (let i = 1; i <= num; i++) {
                 const useFillBlank = supportsFillBlank && i % 3 === 0;
                 questions.push(useFillBlank ? {
                     question_type: 'fill_blank',
-                    content: `Tính giá trị biểu thức $${i} + ${i}$ và điền kết quả cuối cùng.`,
+                    content: `[DEV MOCK] Tính giá trị biểu thức $${i} + ${i}$ và điền kết quả cuối cùng.`,
                     correct_answer: String(i * 2),
                     explanation: `$${i} + ${i} = ${i * 2}$.`
                 } : {
                     question_type: 'multiple_choice',
-                    content: `Câu hỏi mẫu số ${i} môn ${subject_name} Lớp ${grade} (Tự động tạo do hết hạn ngạch API $y = f(x)$)`,
+                    content: `[DEV MOCK] Câu hỏi mẫu số ${i} môn ${subject_name} Lớp ${grade}`,
                     option_a: `Đáp án A của câu hỏi ${i}`,
                     option_b: `Đáp án B của câu hỏi ${i}`,
                     option_c: `Đáp án C của câu hỏi ${i}`,
                     option_d: `Đáp án D của câu hỏi ${i}`,
                     correct_option: ["A", "B", "C", "D"][Math.floor(Math.random() * 4)],
-                    explanation: `Giải thích chi tiết cho đáp án đúng của câu hỏi số ${i} môn ${subject_name} lớp ${grade}.`
+                    explanation: `[DEV MOCK] Giải thích cho câu hỏi số ${i}.`
                 });
             }
-
-            const isPreview = (req.body.preview === true || req.body.preview === 'true' || req.query.preview === 'true');
-            if (isPreview) {
-                return res.json({
-                    msg: 'Quiz generated successfully (MOCK - Quota Exceeded)',
-                    preview: true,
-                    title: `Đề ${subject_name} Lớp ${grade} (Dữ liệu thử nghiệm - Quota Exceeded)`,
-                    subject_id: parseInt(subject_id),
-                    grade: parseInt(grade),
-                    duration: count == 40 ? 50 : 30,
-                    questions: questions,
-                    is_mock: true
-                });
-            }
-
-            const client = await db.pool.connect();
-            try {
-                await client.query('BEGIN');
-                const quizTitle = `Đề ${subject_name} Lớp ${grade} (Dữ liệu thử nghiệm - Quota Exceeded)`;
-                const newQuiz = await client.query(
-                    'INSERT INTO quizzes (title, subject_id, grade, duration_minutes) VALUES ($1, $2, $3, $4) RETURNING *',
-                    [quizTitle, subject_id, grade, count == 40 ? 50 : 30]
-                );
-                const quizId = newQuiz.rows[0].id;
-
-                for (const q of questions) {
-                    await insertQuestionRecord(client, quizId, q);
-                }
-                await client.query('COMMIT');
-                return res.json({ msg: 'Quiz generated successfully (MOCK)', quiz_id: quizId, is_mock: true });
-            } catch (dbErr) {
-                await client.query('ROLLBACK');
-                console.error("DB Error in Mock Fallback:", dbErr);
-                return res.status(500).json({ msg: 'Failed to generate quiz: ' + err.message });
-            } finally {
-                client.release();
-            }
+            return res.json({
+                msg: '[DEV MOCK] Quiz preview generated (NOT saved). Dev-only fallback.',
+                preview: true,
+                title: `[DEV MOCK] Đề ${subject_name} Lớp ${grade}`,
+                subject_id: parseInt(subject_id),
+                grade: parseInt(grade),
+                duration: count == 40 ? 50 : 30,
+                questions: questions,
+                is_mock: true
+            });
         }
-        res.status(500).json({ msg: 'Failed to generate quiz with AI: ' + err.message });
+        res.status(500).json({ msg: 'Không thể tạo đề bằng AI.' });
     }
 });
 
@@ -1894,11 +1880,15 @@ app.post('/api/ai/analyze-results', auth, async (req, res) => {
         console.error("AI Analysis Detailed Error:", err);
         const isQuotaError = err.message && (err.message.includes("429") || err.message.includes("quota") || err.message.includes("Quota"));
         if (isQuotaError) {
-             console.log("Quota exceeded. Falling back to Mock analysis...");
-             return res.json({ analysis: "### Phân tích kết quả học tập (Dữ liệu thử nghiệm - Hết hạn ngạch API)\n\n* **Nhận xét tổng quan**: Bạn đã hoàn thành bài thi với sự nỗ lực rất đáng khen ngợi. Mặc dù còn một số câu trả lời chưa chính xác, đây chính là cơ hội tốt để ôn tập lại kiến thức.\n* **Kiến thức cần lưu ý**: Hãy tập trung ôn tập kỹ lý thuyết của các câu hỏi đã làm sai trong bài kiểm tra.\n* **Lộ trình học tập cá nhân hóa**: \n  * **Tuần 1**: Hệ thống lại toàn bộ lý thuyết liên quan đến các dạng câu hỏi bị sai.\n  * **Tuần 2**: Làm lại các bài trắc nghiệm tương tự.\n  * **Tuần 3 & 4**: Nâng cao kỹ năng làm bài thi thông qua giải đề mẫu.\n* **3 Lời khuyên học tốt**: \n  1. Đọc kỹ đề bài trước khi chọn đáp án.\n  2. Ghi chú các công thức quan trọng vào sổ tay học tập.\n  3. Đều đặn ôn tập mỗi ngày để ghi nhớ lâu hơn." });
+            // Do not present generic placeholder analysis as a real personalized result in production.
+            if (process.env.NODE_ENV === 'production') {
+                return res.status(503).json({ msg: 'Dịch vụ phân tích AI tạm thời không khả dụng. Vui lòng thử lại sau.' });
+            }
+            console.log("[DEV MOCK] Quota exceeded. Returning DEV MOCK analysis...");
+            return res.json({ analysis: "### [DEV MOCK] Phân tích kết quả (dữ liệu giả lập cho development)\n\n* Đây là nội dung DEV MOCK, chỉ hiển thị ở môi trường development khi AI hết hạn ngạch.\n* Sản xuất sẽ trả về trạng thái 503." });
         }
-        res.status(500).json({ 
-            msg: 'AI Analysis Failed', 
+        res.status(500).json({
+            msg: 'AI Analysis Failed',
             error: err.message,
             stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
         });
@@ -2052,23 +2042,20 @@ app.post('/api/roadmap/generate', auth, async (req, res) => {
         console.error("Roadmap Gen Error:", err);
         const isQuotaError = err.message && (err.message.includes("429") || err.message.includes("quota") || err.message.includes("Quota"));
         if (isQuotaError) {
-             console.log("Quota exceeded. Falling back to Mock roadmap...");
-             const roadmapText = "### Lộ trình học tập cá nhân hóa 4 tuần (Dữ liệu thử nghiệm - Hết hạn ngạch API)\n\n* **Tuần 1: Ôn tập cốt lõi**\n  * Trọng tâm: Tập trung nắm vững lại các khái niệm cơ bản dựa trên kết quả khảo sát của bạn.\n  * Bài tập: Hoàn thành 2 bài kiểm tra trắc nghiệm cơ bản.\n* **Tuần 2: Nâng cao kỹ năng**\n  * Trọng tâm: Ôn luyện chuyên sâu các phần kiến thức còn yếu.\n  * Bài tập: Giải các bài tập tự luyện và ghi chú lại các lỗi thường gặp.\n* **Tuần 3: Luyện đề tổng hợp**\n  * Trọng tâm: Bắt đầu làm quen với các đề thi có thời gian làm bài thực tế.\n* **Tuần 4: Đánh giá & Điều chỉnh**\n  * Trọng tâm: Kiểm tra lại các lỗ hổng kiến thức cuối cùng để sẵn sàng cho bài thi chính thức.";
-             try {
-                 const roadmapHistory = buildRoadmapHistory(currentRoadmapData, roadmapText);
-                 await db.query('UPDATE users SET roadmap_data = $1 WHERE id = $2', [roadmapHistory, req.user.id]);
-                 return res.json({
-                     msg: 'Roadmap generated (MOCK)',
-                     roadmap: roadmapText,
-                     history: JSON.parse(roadmapHistory),
-                     is_mock: true
-                 });
-             } catch (dbErr) {
-                 console.error("DB Error in Mock Roadmap Fallback:", dbErr);
-                 return res.status(500).json({ msg: 'Failed to save mock roadmap', error: dbErr.message });
-             }
+            // Never persist a generic placeholder roadmap as the user's real roadmap in production.
+            if (process.env.NODE_ENV === 'production') {
+                return res.status(503).json({ msg: 'Dịch vụ tạo lộ trình AI tạm thời không khả dụng. Vui lòng thử lại sau.' });
+            }
+            console.log("[DEV MOCK] Quota exceeded. Returning DEV MOCK roadmap (not saved)...");
+            const roadmapText = "### [DEV MOCK] Lộ trình 4 tuần (dữ liệu giả lập cho development)\n\n* Nội dung DEV MOCK, chỉ hiển thị ở môi trường development. Không được lưu vào tài khoản.";
+            return res.json({
+                msg: '[DEV MOCK] Roadmap preview (NOT saved). Dev-only fallback.',
+                roadmap: roadmapText,
+                history: [],
+                is_mock: true
+            });
         }
-        res.status(500).json({ msg: 'Failed to generate roadmap', error: err.message });
+        res.status(500).json({ msg: 'Không thể tạo lộ trình.' });
     }
 });
 

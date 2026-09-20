@@ -14,9 +14,15 @@ const subjects = [
 
 const grades = [10, 11, 12];
 
+// ⚠️ DEV ONLY: this script generates placeholder/sample quizzes and questions.
+// It must never run against a production database.
 async function seed() {
+    if (process.env.NODE_ENV === 'production') {
+        console.error('Refusing to run seed_data.js in production (NODE_ENV=production). This script generates placeholder data.');
+        process.exit(1);
+    }
     try {
-        console.log("Starting database seeding...");
+        console.log("Starting database seeding (DEV ONLY)...");
 
         for (const subject of subjects) {
             for (const grade of grades) {

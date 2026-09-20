@@ -109,11 +109,6 @@ INSERT INTO subjects (name, slug) VALUES
 ('Ngữ Văn', 'van'), ('Tin Học', 'tin'), ('Tiếng Anh', 'anh')
 ON CONFLICT (slug) DO NOTHING;
 
--- Seed a Sample User (Password: admin123)
-INSERT INTO users (username, email, password_hash, full_name, level, total_points, is_admin)
-VALUES ('admin', 'admin@eduflow.com', '$2a$10$7R8jZ/G.3x.3fK1G5C5.ueR6N3xY3R3R3R3R3R3R3R3R3R3R3R3R', 'Admin EduFlow', 10, 5000, TRUE)
-ON CONFLICT (username) DO NOTHING;
-
 -- Seed a Sample Quiz (Toán 12)
 INSERT INTO quizzes (title, subject_id, grade, duration_minutes)
 VALUES ('Kiểm tra Đạo hàm - Toán 12', 1, 12, 15)
@@ -135,12 +130,13 @@ async function setup() {
         await db.query(schema);
         console.log("✔ Tables and Views created.");
 
-        // Run Seed Data
+        // Run Seed Data (subjects + one sample quiz)
         const seedResult = await db.query(seedData);
-        console.log("✔ Subjects and Sample User seeded.");
+        console.log("✔ Subjects seeded.");
 
-        if (seedResult[2] && seedResult[2].rows && seedResult[2].rows.length > 0) {
-            const quizId = seedResult[2].rows[0].id;
+        // seedData runs 2 statements: [0] subjects INSERT, [1] quizzes INSERT ... RETURNING id
+        if (seedResult[1] && seedResult[1].rows && seedResult[1].rows.length > 0) {
+            const quizId = seedResult[1].rows[0].id;
             await db.query(seedQuestions(quizId));
             console.log("✔ Sample Quiz and Questions seeded.");
         }

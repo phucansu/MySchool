@@ -923,16 +923,55 @@ async function updateStreak(user_id) {
 }
 
 // 4. Submit result
+// Server-side answer checking (mirrors the frontend logic; the server is authoritative).
+function isAnswerCorrectServer(question, answer) {
+    if (question.question_type !== 'fill_blank') {
+        return answer === question.correct_option;
+    }
+    const expected = Number(String(question.correct_answer ?? '').trim().replace(',', '.'));
+    const actual = Number(String(answer ?? '').trim().replace(',', '.'));
+    if (!Number.isFinite(expected) || !Number.isFinite(actual)) return false;
+    const tolerance = Math.max(1e-6, Math.abs(expected) * 1e-4);
+    return Math.abs(actual - expected) <= tolerance;
+}
+
 app.post('/api/results', auth, async (req, res) => {
-    const { quiz_id, score, correct_count, total_count, time_spent } = req.body;
+    // The client submits only quiz_id + its chosen answers + time_spent.
+    // The server computes score/correct_count/points from the official answers in the DB
+    // and IGNORES any client-supplied score/points/correct_count (anti-cheat, N-12/N-14 Level 1).
+    const { quiz_id, answers, time_spent } = req.body;
     const user_id = req.user.id;
     try {
+        if (!quiz_id || typeof answers !== 'object' || answers === null || Array.isArray(answers)) {
+            return res.status(400).json({ msg: 'Dữ liệu bài làm không hợp lệ.' });
+        }
+
+        // Fetch the official answers for THIS quiz only. Answers keyed by questions that do not
+        // belong to this quiz are simply ignored (cannot be used to fabricate a score).
+        const qRes = await db.query(
+            'SELECT id, question_type, correct_option, correct_answer FROM questions WHERE quiz_id = $1',
+            [quiz_id]
+        );
+        if (qRes.rows.length === 0) {
+            return res.status(404).json({ msg: 'Không tìm thấy câu hỏi cho đề này.' });
+        }
+
+        const totalQuestions = qRes.rows.length;
+        let correctCount = 0;
+        for (const q of qRes.rows) {
+            const submitted = Object.prototype.hasOwnProperty.call(answers, q.id) ? answers[q.id] : answers[String(q.id)];
+            if (isAnswerCorrectServer(q, submitted)) correctCount++;
+        }
+
+        const score = totalQuestions > 0 ? (correctCount / totalQuestions) * 10 : 0;
+        const pointsEarned = correctCount * 10;
+        const timeSpentSafe = Number.isFinite(Number(time_spent)) ? Math.max(0, Math.floor(Number(time_spent))) : 0;
+
         const newResult = await db.query(
             'INSERT INTO results (user_id, quiz_id, score, correct_answers_count, total_questions, time_spent_seconds) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [user_id, quiz_id, score, correct_count, total_count, time_spent]
+            [user_id, quiz_id, score, correctCount, totalQuestions, timeSpentSafe]
         );
 
-        const pointsEarned = correct_count * 10;
         await db.query(
             'UPDATE users SET total_points = total_points + $1 WHERE id = $2',
             [pointsEarned, user_id]
@@ -943,7 +982,7 @@ app.post('/api/results', auth, async (req, res) => {
 
         res.json({ ...newResult.rows[0], ...streakInfo });
     } catch (err) {
-        console.error(err.message);
+        console.error('Submit Result Error:', err.message);
         res.status(500).json({ msg: 'Server Error' });
     }
 });
@@ -1905,7 +1944,7 @@ function isStoredQuestionAnswerCorrect(question, answer) {
 }
 
 app.post('/api/ai/analyze-results', auth, aiLimiter, async (req, res) => {
-    const { quiz_id, score, correct_count, total_count, userAnswers } = req.body;
+    const { quiz_id, userAnswers } = req.body;
     console.log("AI Analysis Request for quiz_id:", quiz_id);
     try {
         // Get quiz info
@@ -1914,15 +1953,19 @@ app.post('/api/ai/analyze-results', auth, aiLimiter, async (req, res) => {
             [quiz_id]
         );
         if (quizRes.rows.length === 0) return res.status(404).json({ msg: 'Quiz not found' });
-        
+
         const quiz = quizRes.rows[0];
         const questionsRes = await db.query('SELECT * FROM questions WHERE quiz_id = $1 ORDER BY id ASC', [quiz_id]);
         const questions = questionsRes.rows;
 
-        // Identify wrong answers
+        // Identify wrong answers and compute score server-side (do not trust client-sent score).
+        const answersArr = Array.isArray(userAnswers) ? userAnswers : [];
         let weakPoints = [];
+        let correct_count = 0;
         questions.forEach((q, index) => {
-            if (!isStoredQuestionAnswerCorrect(q, userAnswers[index])) {
+            if (isStoredQuestionAnswerCorrect(q, answersArr[index])) {
+                correct_count++;
+            } else {
                 weakPoints.push({
                     content: q.content,
                     correct_option: q.question_type === 'fill_blank' ? q.correct_answer : q.correct_option,
@@ -1930,6 +1973,8 @@ app.post('/api/ai/analyze-results', auth, aiLimiter, async (req, res) => {
                 });
             }
         });
+        const total_count = questions.length;
+        const score = total_count > 0 ? (correct_count / total_count) * 10 : 0;
 
         const gemini = await getGeminiClient();
         const model = gemini.getGenerativeModel({ model: "gemini-2.5-flash" });

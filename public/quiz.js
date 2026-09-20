@@ -510,23 +510,24 @@ async function submitQuiz() {
         : `Bạn đã trả lời đúng ${correctCount}/${questions.length} câu hỏi.`;
     document.getElementById('result-modal').style.display = 'flex';
 
-    // Submit to API
-    const user = JSON.parse(localStorage.getItem('user'));
+    // Submit to API. The server re-computes the score from the official answers;
+    // we only send the user's chosen answers keyed by question id (+ time spent).
     const token = localStorage.getItem('token');
-    
+    const answers = {};
+    questions.forEach((q, index) => {
+        answers[q.id] = userAnswers[index] ?? null;
+    });
+
     try {
         const res = await fetch(`${API_URL}/results`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
-                'x-auth-token': token 
+                'x-auth-token': token
             },
             body: JSON.stringify({
-                user_id: user.id,
                 quiz_id: currentQuiz.id,
-                score: score,
-                correct_count: correctCount,
-                total_count: questions.length,
+                answers: answers,
                 time_spent: currentMode === 'practice' ? 0 : (currentQuiz.duration_minutes * 60) - timeLeft
             })
         });

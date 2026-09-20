@@ -1,7 +1,7 @@
 {
-  "name": "quiz3",
+  "name": "myschool",
   "version": "1.0.0",
-  "description": "Edu-Flow - Nền tảng ôn thi hàng đầu Việt Nam",
+  "description": "MySchool - Nền tảng hỗ trợ giảng dạy và học tập hiệu quả",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,8 +11,8 @@
     "migrate": "node migrate.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "An Nguyễn",
+  "license": "MIT",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^3.0.3",

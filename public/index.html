@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edu-Flow - Nền tảng ôn thi hàng đầu Việt Nam</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+    <!-- KaTeX CDN for mathematical/scientific rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, { delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}] });"></script>
+    <script src="main.js" defer></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="#" class="logo">Edu<span>Flow</span></a>
+            <ul class="nav-links">
+                <li><a href="#subjects">Kiểm tra</a></li>
+                <li><a href="practice.html">Luyện tập</a></li>
+                <li><a href="leaderboard.html">Bảng xếp hạng</a></li>
+                <li><a href="auth.html" class="btn btn-outline">Đăng nhập</a></li>
+                <li><a href="auth.html" class="btn btn-primary">Bắt đầu ngay</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <header id="hero-section" class="hero reveal">
+        <div class="container hero-grid">
+            <div class="hero-content">
+                <h1>Chinh phục kỳ thi với <span>Edu-Flow</span></h1>
+                <p>Nền tảng học tập thông minh giúp bạn ôn luyện các môn Toán, Lý, Hóa... một cách hiệu quả và thú vị nhất.</p>
+                <div class="hero-btns">
+                    <a href="#subjects" class="btn btn-primary btn-lg">Khám phá ngay</a>
+                    <a href="#" class="btn btn-outline btn-lg">Xem bảng xếp hạng</a>
+                </div>
+            </div>
+            <div class="hero-image">
+                <img src="hero.png" alt="Edu-Flow Hero">
+                <div class="floating-card card-1">
+                    <span class="icon">🏆</span>
+                    <div>
+                        <small>Top 1 tuần</small>
+                        <p>Nguyễn Văn A</p>
+                    </div>
+                </div>
+                <div class="floating-card card-2">
+                    <span class="icon">⭐</span>
+                    <div>
+                        <small>Kinh nghiệm</small>
+                        <p>Level 12</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section id="subjects" class="subjects reveal">
+        <div class="container">
+            <div class="section-header">
+                <h2>Chọn bài kiểm tra của bạn</h2>
+                <p>Hệ thống câu hỏi trắc nghiệm đa dạng và phong phú.</p>
+                
+                <!-- Grade Selection -->
+                <div class="grade-selector">
+                    <button class="btn btn-outline grade-btn" data-grade="10" onclick="selectGrade(10)">Lớp 10</button>
+                    <button class="btn btn-outline grade-btn" data-grade="11" onclick="selectGrade(11)">Lớp 11</button>
+                    <button class="btn btn-primary grade-btn" data-grade="12" onclick="selectGrade(12)">Lớp 12</button>
+                </div>
+            </div>
+            <div class="subject-grid">
+                <!-- Subject Cards -->
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon orange">📐</div>
+                    <h3>Toán Học</h3>
+                    <p>Hơn 5000+ câu hỏi trắc nghiệm</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon red">⚡</div>
+                    <h3>Vật Lý</h3>
+                    <p>Tổng hợp đề thi các năm</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon yellow">🧪</div>
+                    <h3>Hóa Học</h3>
+                    <p>Lý thuyết và bài tập thực tế</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon green">🧬</div>
+                    <h3>Sinh Học</h3>
+                    <p>Hình ảnh minh họa sinh động</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon blue">📜</div>
+                    <h3>Lịch Sử</h3>
+                    <p>Ghi nhớ qua các mốc thời gian</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon purple">🌍</div>
+                    <h3>Địa Lý</h3>
+                    <p>Kiến thức địa lý Việt Nam & Thế giới</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon brown">🖋️</div>
+                    <h3>Ngữ Văn</h3>
+                    <p>Phân tích tác phẩm & Nghị luận</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+                <div class="subject-card stagger-reveal">
+                    <div class="subject-icon cyan">💻</div>
+                    <h3>Tin Học</h3>
+                    <p>Lập trình & Kiến thức máy tính</p>
+                    <a href="#" class="link">Làm bài →</a>
+                </div>
+            </div>
+        </div>
+    <section id="ranking" class="ranking reveal">
+        <div class="container">
+            <div class="section-header">
+                <h2>Bảng Xếp Hạng Cao Thủ</h2>
+                <p>Những học sinh có thành tích xuất sắc nhất tuần này</p>
+            </div>
+            <div class="ranking-card">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th>Hạng</th>
+                            <th>Người dùng</th>
+                            <th>Cấp độ</th>
+                            <th>Tổng điểm</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboard-body">
+                        <!-- Data will be injected here -->
+                        <tr>
+                            <td colspan="4" style="text-align: center; padding: 40px;">Đang tải dữ liệu...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <a href="#" class="logo">Edu<span>Flow</span></a>
+            <p>&copy; 2026 Edu-Flow Platform. Mang lại kiến thức cho mọi người.</p>
+        </div>
+    </footer>
+
+    <!-- Mode Selection Modal -->
+    <div class="modal-overlay" id="mode-select-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); z-index: 2000; align-items: center; justify-content: center; padding: 20px;">
+        <div class="result-modal" style="max-width: 500px; text-align: left; padding: 30px; position: relative; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.95); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);">
+            <span class="close-report" onclick="closeModeSelectModal()" style="position: absolute; top: 20px; right: 20px; color: var(--text-gray); font-size: 1.8rem; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='var(--text-gray)'">×</span>
+            <h2 style="font-size: 1.8rem; font-weight: 700; margin-bottom: 10px; background: linear-gradient(135deg, var(--primary), #FF4500); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Lựa chọn chế độ làm bài</h2>
+            <p style="color: var(--text-gray); margin-bottom: 25px; font-size: 0.95rem; line-height: 1.5;">Hãy chọn chế độ phù hợp với mục tiêu học tập của bạn hôm nay:</p>
+            
+            <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 25px;">
+                <!-- Exam Mode Option -->
+                <div id="opt-exam" onclick="selectQuizMode('exam')" style="display: flex; gap: 15px; padding: 18px; border-radius: 16px; border: 2.5px solid var(--primary-soft); background: #FFFBF8; cursor: pointer; transition: all 0.25s ease;" onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)'" onmouseout="if (!this.classList.contains('active')) { this.style.borderColor='#E2E8F0'; this.style.background='#F8FAFC'; } else { this.style.borderColor='var(--primary)'; this.style.background='#FFFBF8'; } this.style.transform='none'">
+                    <div style="font-size: 2.2rem; display: flex; align-items: center; justify-content: center;">⏱️</div>
+                    <div>
+                        <h4 style="margin: 0 0 4px; font-size: 1.05rem; font-weight: 700; color: #1E293B;">Chế độ Thi cử</h4>
+                        <p style="margin: 0; font-size: 0.85rem; color: #64748B; line-height: 1.4;">Có giới hạn thời gian, áp dụng tính điểm và cộng điểm xếp hạng của bạn.</p>
+                    </div>
+                </div>
+                
+                <!-- Practice Mode Option -->
+                <div id="opt-practice" onclick="selectQuizMode('practice')" style="display: flex; gap: 15px; padding: 18px; border-radius: 16px; border: 2.5px solid #E2E8F0; background: #F8FAFC; cursor: pointer; transition: all 0.25s ease;" onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)'" onmouseout="if (!this.classList.contains('active')) { this.style.borderColor='#E2E8F0'; this.style.background='#F8FAFC'; } else { this.style.borderColor='var(--primary)'; this.style.background='#FFFBF8'; } this.style.transform='none'">
+                    <div style="font-size: 2.2rem; display: flex; align-items: center; justify-content: center;">♾️</div>
+                    <div>
+                        <h4 style="margin: 0 0 4px; font-size: 1.05rem; font-weight: 700; color: #1E293B;">Chế độ Luyện tập</h4>
+                        <p style="margin: 0; font-size: 0.85rem; color: #64748B; line-height: 1.4;">Không giới hạn thời gian làm bài, tự do suy nghĩ và ôn luyện.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button onclick="closeModeSelectModal()" class="btn btn-outline" style="padding: 10px 20px; font-size: 0.9rem;">Hủy</button>
+                <button id="btn-start-quiz" onclick="startSelectedQuiz()" class="btn btn-primary" style="padding: 10px 25px; font-size: 0.9rem; font-weight: 700;">Bắt đầu ngay</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

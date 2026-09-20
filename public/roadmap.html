@@ -7,9 +7,9 @@
     <link rel="stylesheet" href="style.css">
     <script src="theme.js"></script>
     <!-- KaTeX CDN for mathematical/scientific rendering -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, { delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}] });"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js" integrity="sha384-cpW21h6RZv/phavutF+AuVYrr+dA8xD9zs6FwLpaCct6O9ctzYFfFr4dgmgccOTx" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" referrerpolicy="no-referrer" onload="renderMathInElement(document.body, { delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}] });"></script>
     <style>
         .roadmap-container { padding: 60px 0; }
         .roadmap-header { 
@@ -164,9 +164,13 @@
         <p style="margin-top: 20px; color: var(--text-gray);">Quá trình này có thể mất khoảng 30 giây.</p>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/vendor/marked.min.js"></script>
+    <script src="/vendor/purify.min.js"></script>
     <script>
         const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000/api' : '/api';
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+        }
         let roadmapHistory = [];
         
         async function init() {
@@ -211,9 +215,9 @@
                 const s = typeof user.survey_data === 'string' ? JSON.parse(user.survey_data) : (user.survey_data || {});
                 const basisDiv = document.getElementById('analysis-basis');
                 basisDiv.innerHTML = `
-                    <div class="info-tag">Lớp ${s.grade || '--'}</div>
-                    <div class="info-tag">${s.stream || '--'}</div>
-                    <div class="info-tag">Mục tiêu: ${s.goal || '--'}</div>
+                    <div class="info-tag">Lớp ${escapeHtml(s.grade || '--')}</div>
+                    <div class="info-tag">${escapeHtml(s.stream || '--')}</div>
+                    <div class="info-tag">Mục tiêu: ${escapeHtml(s.goal || '--')}</div>
                 `;
 
                 roadmapHistory = await loadRoadmapHistory(token);
@@ -281,7 +285,8 @@
             });
 
             const targetEl = document.getElementById('roadmap-html-content');
-            targetEl.innerHTML = marked.parse(roadmap.content);
+            // Sanitize AI-generated Markdown->HTML before inserting (defense against XSS).
+            targetEl.innerHTML = DOMPurify.sanitize(marked.parse(roadmap.content));
             if (typeof renderMathInElement === 'function') {
                 renderMathInElement(targetEl, {
                     delimiters: [

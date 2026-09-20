@@ -199,6 +199,9 @@
 
     <script>
         const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000/api' : '/api';
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+        }
 
         document.addEventListener('DOMContentLoaded', async () => {
             updateNavbar();
@@ -263,10 +266,10 @@
                             podiumDiv.innerHTML = `
                                 <div class="avatar-wrapper">
                                     ${index === 0 ? `<div class="crown">👑</div>` : ''}
-                                    <div class="podium-avatar">${user.username.charAt(0).toUpperCase()}</div>
+                                    <div class="podium-avatar">${escapeHtml(String(user.username || '?').charAt(0).toUpperCase())}</div>
                                 </div>
-                                <div class="podium-username">${user.full_name || user.username}</div>
-                                <div class="podium-pts">${user.total_points.toLocaleString()} pts</div>
+                                <div class="podium-username">${escapeHtml(user.full_name || user.username)}</div>
+                                <div class="podium-pts">${Number(user.total_points).toLocaleString()} pts</div>
                                 <div class="podium-badge">${rankText}</div>
                             `;
                             topPodium.appendChild(podiumDiv);
@@ -279,15 +282,15 @@
                         row.className = `rank-${user.rank_position}`;
                         
                         row.innerHTML = `
-                            <td><div class="rank-badge">${user.rank_position}</div></td>
+                            <td><div class="rank-badge">${Number(user.rank_position)}</div></td>
                             <td>
                                 <div class="user-cell">
-                                    <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                                    <span>${user.full_name || user.username}</span>
+                                    <div class="user-avatar">${escapeHtml(String(user.username || '?').charAt(0).toUpperCase())}</div>
+                                    <span>${escapeHtml(user.full_name || user.username)}</span>
                                 </div>
                             </td>
-                            <td>Level ${user.level}</td>
-                            <td class="points-cell">${user.total_points.toLocaleString()} pts</td>
+                            <td>Level ${Number(user.level)}</td>
+                            <td class="points-cell">${Number(user.total_points).toLocaleString()} pts</td>
                         `;
                         leaderboardBody.appendChild(row);
                     });

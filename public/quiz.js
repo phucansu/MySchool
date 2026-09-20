@@ -663,7 +663,7 @@ function showReview() {
             item.className = 'wrong-answer-item';
             item.innerHTML = `
                 <b>Câu ${index + 1}: ${autoWrapMath(q.content)}</b>
-                <p>Bạn chọn: <span class="your-ans">${userAnswers[index] || 'Chưa trả lời'}</span></p>
+                <p>Bạn chọn: <span class="your-ans">${escapeAttribute(userAnswers[index] || 'Chưa trả lời')}</span></p>
                 <p>Đáp án đúng: <span class="correct-ans">${escapeAttribute(expectedAnswer)}</span></p>
                 ${q.explanation ? `<p style="font-size: 0.9rem; color: #64748b; margin-top: 8px;"><i>💡 Giải thích: ${autoWrapMath(q.explanation)}</i></p>` : ''}
             `;
@@ -760,7 +760,7 @@ async function analyzeAI() {
                 });
             }
         } else if (data.error || data.msg) {
-            content.innerHTML = `<p style="color: var(--danger);">Lỗi hệ thống: ${data.error || data.msg}.</p>`;
+            content.innerHTML = `<p style="color: var(--danger);">Lỗi hệ thống: ${escapeAttribute(data.error || data.msg || '')}.</p>`;
         } else {
             content.innerHTML = '<p style="color: var(--danger);">Máy chủ AI trả về kết quả không xác định. Vui lòng thử lại.</p>';
         }
@@ -776,8 +776,10 @@ async function analyzeAI() {
 // Simple Markdown to HTML helper
 function renderMarkdown(text) {
     if (!text) return '';
-    
-    let html = text
+
+    // Escape HTML first so any markup in the (AI-provided) text cannot inject scripts.
+    let html = String(text)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/^### (.*$)/gim, '<h3>$1</h3>')
         .replace(/^## (.*$)/gim, '<h2>$1</h2>')
         .replace(/^# (.*$)/gim, '<h1>$1</h1>')
@@ -855,6 +857,10 @@ function autoWrapMath(text) {
         placeholders.push(replacement);
         return `___MATH_PLACEHOLDER_${placeholders.length - 1}___`;
     });
+
+    // 6b. Escape any HTML in the surrounding (non-math) text to prevent XSS.
+    // Math blocks are held in placeholders and restored afterwards; KaTeX renders them safely.
+    res = res.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // 7. Restore placeholders
     while (res.includes('___MATH_PLACEHOLDER_')) {

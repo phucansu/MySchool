@@ -1,4 +1,14 @@
 const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000/api' : '/api';
+
+// Escape user/DB-provided text before inserting into innerHTML (prevents stored XSS).
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 const chatbotOnlyMode = Boolean(
     document.querySelector('script[type="module"][src$="main.js"]')
     && !document.querySelector('script:not([type="module"])[src$="main.js"]')
@@ -140,15 +150,15 @@ async function fetchLeaderboard() {
                 row.className = `rank-${user.rank_position}`;
                 
                 row.innerHTML = `
-                    <td><div class="rank-badge">${user.rank_position}</div></td>
+                    <td><div class="rank-badge">${Number(user.rank_position)}</div></td>
                     <td>
                         <div class="user-cell">
-                            <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                            <span>${user.full_name || user.username}</span>
+                            <div class="user-avatar">${escapeHtml(String(user.username || '?').charAt(0).toUpperCase())}</div>
+                            <span>${escapeHtml(user.full_name || user.username)}</span>
                         </div>
                     </td>
-                    <td>Level ${user.level}</td>
-                    <td class="points-cell">${user.total_points.toLocaleString()} pts</td>
+                    <td>Level ${Number(user.level)}</td>
+                    <td class="points-cell">${Number(user.total_points).toLocaleString()} pts</td>
                 `;
                 leaderboardBody.appendChild(row);
             });
@@ -180,9 +190,9 @@ async function fetchSubjects() {
                 
                 card.innerHTML = `
                     <div class="subject-icon ${icon.color}">${icon.emoji}</div>
-                    <h3>${subject.name}</h3>
-                    <p>Khám phá kho tàng kiến thức môn ${subject.name}</p>
-                    <a href="#" onclick="checkAuthAndGo(${subject.id}, event)" class="link">Làm bài →</a>
+                    <h3>${escapeHtml(subject.name)}</h3>
+                    <p>Khám phá kho tàng kiến thức môn ${escapeHtml(subject.name)}</p>
+                    <a href="#" onclick="checkAuthAndGo(${Number(subject.id)}, event)" class="link">Làm bài →</a>
                 `;
                 subjectGrid.appendChild(card);
             });

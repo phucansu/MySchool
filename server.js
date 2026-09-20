@@ -360,6 +360,9 @@ app.post('/api/auth/google', async (req, res) => {
             if (process.env.NODE_ENV === 'production') {
                 return res.status(403).json({ msg: 'Chức năng đăng nhập giả lập không khả dụng.' });
             }
+            // NOTE: dev-only mock values. The avatar fallback uses external CDNs
+            // (images.unsplash.com / ui-avatars.com). TODO(prod): replace external avatar
+            // dependencies with a self-hosted default avatar before relying on them in production.
             email = mockData.email || 'student@gmail.com';
             name = mockData.name || 'Học viên Demo';
             avatar_url = mockData.picture || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=120';

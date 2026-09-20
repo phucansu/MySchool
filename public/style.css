@@ -601,6 +601,29 @@ body {
     transform: perspective(1000px) rotateY(-5deg) rotateX(2deg);
 }
 
+/* Lightweight CSS-only hero placeholder (no external image asset). */
+.hero-image-placeholder {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: var(--radius-lg);
+    box-shadow: 20px 30px 80px rgba(255, 122, 0, 0.15);
+    background: linear-gradient(135deg, var(--primary, #FF8A00) 0%, var(--primary-dark, #E67E00) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.hero-image-placeholder span {
+    font-size: clamp(64px, 12vw, 140px);
+    line-height: 1;
+    filter: drop-shadow(0 6px 16px rgba(0,0,0,0.2));
+}
+
+.hero-image-placeholder:hover {
+    transform: perspective(1000px) rotateY(-5deg) rotateX(2deg);
+}
+
 .floating-card {
     position: absolute;
     background: var(--white);

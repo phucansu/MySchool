@@ -23,3 +23,4 @@ npm-debug.log*
 # Unverified-license asset: kept locally, not distributed (see N-06).
 # Replace with your own licensed hero image, then remove this line.
 public/hero.png
+.neon
